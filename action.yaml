@@ -1,0 +1,62 @@
+name: 'Force-update flux-main branch'
+description: 'Updates flux-main branch to match the current branch if conditions are met'
+inputs:
+  build-container:
+    description: 'Whether container was built (true/false)'
+    required: true
+  k8s-changed:
+    description: 'Whether k8s files changed (true/false)'
+    required: true
+  update-image-tag-result:
+    description: 'Result of update-image-tag job (success/failure)'
+    required: true
+  branch-name:
+    description: 'Branch name to push to flux-main (defaults to github.ref_name)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Decide if we should update flux-main
+      id: should_run
+      run: |
+        echo "build_container=${{ inputs.build-container }}"
+        echo "k8s_changed=${{ inputs.k8s-changed }}"
+        echo "update_image_tag_result=${{ inputs.update-image-tag-result }}"
+        if {
+          [ "${{ inputs.build-container }}" = "true" ] && [ "${{ inputs.update-image-tag-result }}" = "success" ]
+        } || {
+          [ "${{ inputs.build-container }}" = "false" ] && [ "${{ inputs.k8s-changed }}" = "true" ]
+        }; then
+          echo "run_flux=true" >> $GITHUB_ENV
+        else
+          echo "run_flux=false" >> $GITHUB_ENV
+        fi
+      shell: bash
+
+    - name: Checkout Repository
+      if: env.run_flux == 'true'
+      uses: actions/checkout@v5
+
+    - name: Ensure local branch is up to date with remote
+      if: env.run_flux == 'true'
+      run: |
+        git fetch origin
+        branch_name="${{ inputs.branch-name }}"
+        if [ -z "$branch_name" ]; then
+          branch_name="${{ github.ref_name }}"
+        fi
+        git checkout "$branch_name"
+        git reset --hard "origin/$branch_name"
+      shell: bash
+
+    - name: Force-update flux-main to match branch
+      if: env.run_flux == 'true'
+      run: |
+        branch_name="${{ inputs.branch-name }}"
+        if [ -z "$branch_name" ]; then
+          branch_name="${{ github.ref_name }}"
+        fi
+        git push origin "$branch_name:flux-main" --force
+      shell: bash
