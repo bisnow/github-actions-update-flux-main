@@ -20,6 +20,7 @@ runs:
   steps:
     - name: Decide if we should update flux-main
       id: should_run
+      shell: bash
       run: |
         echo "build_container=${{ inputs.build-container }}"
         echo "k8s_changed=${{ inputs.k8s-changed }}"
@@ -33,7 +34,6 @@ runs:
         else
           echo "run_flux=false" >> $GITHUB_ENV
         fi
-      shell: bash
 
     - name: Checkout Repository
       if: env.run_flux == 'true'
@@ -41,22 +41,32 @@ runs:
 
     - name: Ensure local branch is up to date with remote
       if: env.run_flux == 'true'
+      shell: bash
       run: |
         git fetch origin
         branch_name="${{ inputs.branch-name }}"
         if [ -z "$branch_name" ]; then
-          branch_name="${{ github.ref_name }}"
+          # Check if ref is a tag, if so use main branch
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            branch_name="main"
+          else
+            branch_name="${{ github.ref_name }}"
+          fi
         fi
         git checkout "$branch_name"
         git reset --hard "origin/$branch_name"
-      shell: bash
 
     - name: Force-update flux-main to match branch
       if: env.run_flux == 'true'
+      shell: bash
       run: |
         branch_name="${{ inputs.branch-name }}"
         if [ -z "$branch_name" ]; then
-          branch_name="${{ github.ref_name }}"
+          # Check if ref is a tag, if so use main branch
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            branch_name="main"
+          else
+            branch_name="${{ github.ref_name }}"
+          fi
         fi
         git push origin "$branch_name:flux-main" --force
-      shell: bash
