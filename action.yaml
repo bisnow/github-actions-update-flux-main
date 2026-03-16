@@ -37,7 +37,7 @@ runs:
 
     - name: Checkout Repository
       if: env.run_flux == 'true'
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Ensure local branch is up to date with remote
       if: env.run_flux == 'true'
