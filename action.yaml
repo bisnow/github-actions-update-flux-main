@@ -14,6 +14,10 @@ inputs:
     description: 'Branch name to push to flux-main (defaults to github.ref_name)'
     required: false
     default: ''
+  environment:
+    description: 'Deployment environment (e.g. prod, non-prod). Non-prod environments will preserve .k8s/prod from flux-main.'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -56,17 +60,22 @@ runs:
         git checkout "$branch_name"
         git reset --hard "origin/$branch_name"
 
+    - name: Restore .k8s/prod from flux-main (non-prod environments)
+      if: env.run_flux == 'true' && inputs.environment != 'prod'
+      shell: bash
+      run: |
+        if git ls-remote --exit-code origin flux-main > /dev/null 2>&1; then
+          git fetch origin flux-main
+          git checkout origin/flux-main -- .k8s/prod 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config user.name "github-actions[bot]"
+            git commit -m "chore: preserve .k8s/prod from flux-main [skip ci]"
+          fi
+        fi
+
     - name: Force-update flux-main to match branch
       if: env.run_flux == 'true'
       shell: bash
       run: |
-        branch_name="${{ inputs.branch-name }}"
-        if [ -z "$branch_name" ]; then
-          # Check if ref is a tag, if so use main branch
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            branch_name="main"
-          else
-            branch_name="${{ github.ref_name }}"
-          fi
-        fi
-        git push origin "$branch_name:flux-main" --force
+        git push origin "HEAD:flux-main" --force
