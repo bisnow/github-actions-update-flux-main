@@ -61,21 +61,30 @@ runs:
         git reset --hard "origin/$branch_name"
 
     - name: Restore .k8s/prod from flux-main (non-prod environments)
+      id: restore_prod
       if: env.run_flux == 'true' && inputs.environment != 'prod'
       shell: bash
       run: |
         if git ls-remote --exit-code origin flux-main > /dev/null 2>&1; then
           git fetch origin flux-main
-          git checkout origin/flux-main -- .k8s/prod 2>/dev/null || true
+          git checkout origin/flux-main -- .k8s/prod 2>/dev/null || {
+            if git ls-tree -d origin/flux-main .k8s/prod | grep -q .; then
+              echo "::error::Failed to restore .k8s/prod from flux-main. flux-main will not be updated."
+              exit 1
+            fi
+          }
           if ! git diff --cached --quiet; then
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git config user.name "github-actions[bot]"
-            git commit -m "chore: preserve .k8s/prod from flux-main [skip ci]"
+            git commit -m "chore: preserve .k8s/prod from flux-main [skip ci]" || {
+              echo "::error::Failed to commit .k8s/prod restoration from flux-main. flux-main will not be updated."
+              exit 1
+            }
           fi
         fi
 
     - name: Force-update flux-main to match branch
-      if: env.run_flux == 'true'
+      if: env.run_flux == 'true' && (steps.restore_prod.outcome == 'success' || steps.restore_prod.outcome == 'skipped')
       shell: bash
       run: |
         git push origin "HEAD:flux-main" --force
