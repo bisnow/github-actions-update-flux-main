@@ -60,31 +60,63 @@ runs:
         git checkout "$branch_name"
         git reset --hard "origin/$branch_name"
 
+    # Record the flux-main commit this run builds on. The push below is leased
+    # to it, so a flux-main commit made after this point is never overwritten.
+    # Only "no such branch" (ls-remote exit 2) counts as a missing flux-main;
+    # any other failure stops the run, so a failed read can't skip the
+    # .k8s/prod restore below.
+    - name: Read current flux-main
+      id: flux_main
+      if: env.run_flux == 'true'
+      shell: bash
+      run: |
+        rc=0
+        git ls-remote --exit-code origin refs/heads/flux-main > /dev/null || rc=$?
+        case "$rc" in
+          0)
+            git fetch --no-tags origin +refs/heads/flux-main:refs/remotes/origin/flux-main
+            echo "sha=$(git rev-parse refs/remotes/origin/flux-main)" >> "$GITHUB_OUTPUT"
+            ;;
+          2)
+            echo "flux-main does not exist yet; it will be created."
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::Could not read flux-main from origin (git ls-remote exit $rc). flux-main will not be updated."
+            exit 1
+            ;;
+        esac
+
     - name: Restore .k8s/prod from flux-main (non-prod environments)
       id: restore_prod
       if: env.run_flux == 'true' && inputs.environment != 'prod'
       shell: bash
+      env:
+        FLUX_SHA: ${{ steps.flux_main.outputs.sha }}
       run: |
-        if git ls-remote --exit-code origin flux-main > /dev/null 2>&1; then
-          git fetch origin flux-main
-          git checkout origin/flux-main -- .k8s/prod 2>/dev/null || {
-            if git ls-tree -d origin/flux-main .k8s/prod | grep -q .; then
-              echo "::error::Failed to restore .k8s/prod from flux-main. flux-main will not be updated."
-              exit 1
-            fi
+        if [ -n "$FLUX_SHA" ] && git ls-tree -d "$FLUX_SHA" -- .k8s/prod | grep -q .; then
+          # Replace .k8s/prod wholesale, so files that exist only on this
+          # branch never reach flux-main either.
+          git rm -r -q --ignore-unmatch -- .k8s/prod
+          git checkout "$FLUX_SHA" -- .k8s/prod || {
+            echo "::error::Failed to restore .k8s/prod from flux-main. flux-main will not be updated."
+            exit 1
           }
-          if ! git diff --cached --quiet; then
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git config user.name "github-actions[bot]"
-            git commit -m "chore: preserve .k8s/prod from flux-main [skip ci]" || {
-              echo "::error::Failed to commit .k8s/prod restoration from flux-main. flux-main will not be updated."
-              exit 1
-            }
-          fi
+        fi
+        if ! git diff --cached --quiet; then
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git commit -m "chore: preserve .k8s/prod from flux-main [skip ci]" || {
+            echo "::error::Failed to commit .k8s/prod restoration from flux-main. flux-main will not be updated."
+            exit 1
+          }
         fi
 
     - name: Force-update flux-main to match branch
-      if: env.run_flux == 'true' && (steps.restore_prod.outcome == 'success' || steps.restore_prod.outcome == 'skipped')
+      if: env.run_flux == 'true' && steps.flux_main.outcome == 'success' && (steps.restore_prod.outcome == 'success' || steps.restore_prod.outcome == 'skipped')
       shell: bash
+      env:
+        FLUX_SHA: ${{ steps.flux_main.outputs.sha }}
       run: |
-        git push origin "HEAD:flux-main" --force
+        # An empty FLUX_SHA leases on "flux-main must not exist yet".
+        git push origin "HEAD:refs/heads/flux-main" --force-with-lease="refs/heads/flux-main:$FLUX_SHA"
