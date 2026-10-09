@@ -76,10 +76,11 @@ jobs:
 
 ## Important Notes
 
-- This action uses `--force` to push to `flux-main`, so the branch will be overwritten
+- This action overwrites `flux-main` with `--force-with-lease`, leased to the `flux-main` commit it read at the start of the run. If `flux-main` moves before the push (for example, a prod promotion committed straight to `flux-main`), the push is refused and the job fails. Re-run the deploy.
+- If `flux-main` can't be read (any `git ls-remote` failure other than "branch doesn't exist"), the action stops before pushing.
 - The `update-flux-main` job should use `if: always()` to run even if previous jobs fail
 - Use `needs.job-name.result` to pass the job result status
-- When `environment` is not `prod`, the action restores `.k8s/prod/` from the current `flux-main` before pushing, preventing non-prod deploys from affecting production Kubernetes config. If this restoration fails, the push is blocked.
+- When `environment` is not `prod`, the action replaces `.k8s/prod/` with the copy on the current `flux-main` before pushing, so non-prod deploys can't affect production Kubernetes config. Files under `.k8s/prod/` that exist only on your branch are dropped too. If `flux-main` has no `.k8s/prod/`, your branch's copy is pushed as before. If the restoration fails, the push is blocked.
 
 ## Versioning
 
